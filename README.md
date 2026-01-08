@@ -69,7 +69,8 @@ For readability, this library also provides a method chaining API.
 ```ts
 const timesTwo = chain(parseIntStrict("123"))
     .map((n) => n * 2)
-    .unwrapOr(0);
+    .unwrapOr(0)
+    .result; // extract the plain Result type
 ```
 
 This more closely resembles the equivalent Rust code:

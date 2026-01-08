@@ -2,6 +2,8 @@
 
 A Typescript implementation of Rust's [`std::result::Result`](https://doc.rust-lang.org/std/result/enum.Result.html) enum type. Make errors in fallible subroutines predictable and impossible to ignore.
 
+This library, compared to others, aims to be more thinly abstracted, stricter with regards to type safety, and more closely resemble the original Rust API.
+
 ```
 npm install @iahuang/result-ts
 ```

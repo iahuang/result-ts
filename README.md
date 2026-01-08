@@ -2,6 +2,10 @@
 
 A Typescript implementation of Rust's [`std::result::Result`](https://doc.rust-lang.org/std/result/enum.Result.html) enum type. Make errors in fallible subroutines predictable and impossible to ignore.
 
+```
+npm install @iahuang/result-ts
+```
+
 ## Example Usage
 
 ```ts

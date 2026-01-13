@@ -1,6 +1,6 @@
 {
     "name": "@iahuang/result-ts",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "A Typescript implementation of Rust's [`std::result::Result`](https://doc.rust-lang.org/std/result/enum.Result.html) enum type. Make errors in fallible subroutines predictable and impossible to ignore.",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",

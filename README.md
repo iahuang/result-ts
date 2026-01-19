@@ -5,7 +5,7 @@ A TypeScript implementation of Rust's [`std::result::Result`](https://doc.rust-l
 This library provides a lightweight, type-safe way to handle errors without exceptions. It aims to:
 - Stay close to Rust's original API design
 - Provide strict type safety with full TypeScript inference
-- Use plain objects (not classes) for easy serialization
+- Use plain objects as opposed to classes to allow for JSON serialization
 - Support both synchronous and asynchronous operations
 
 ## Installation
@@ -16,58 +16,38 @@ npm install @iahuang/result-ts
 
 ## Quick Start
 
+Define your error types, then use `resultType()` to create a type-safe result builder:
+
 ```ts
+import { resultType, chain, match } from '@iahuang/result-ts';
+
 type ParseErrors = {
-    invalid_number: string; // the string that failed to parse as a number
-    negative: number; // the number that was negative
+    invalid_number: string;
+    negative: number;
 };
 
 const parseResult = resultType<number, ParseErrors>();
 
-type ParseError = Err<ParseErrors>; // { ok: false, error: "invalid_number", detail: string } | { ok: false, error: "negative", detail: number }
-type ParseOk = Ok<number>; // { ok: true, value: number }
-
-type ParseResult = ResultType<typeof parseResult>; // ParseError | ParseOk
-
-function parseIntStrict(s: string): ParseResult {
+function parsePositiveInt(s: string) {
     const n = Number.parseInt(s, 10);
     if (Number.isNaN(n)) return parseResult.err("invalid_number", s);
     if (n < 0) return parseResult.err("negative", n);
     return parseResult.ok(n);
 }
-
-const timesTwo = resultMap(parseIntStrict("123"), (n) => n * 2);
-
-// construct plain results manually
-const okResult = parseResult.ok(123); // { ok: true, value: 123 }
-const errResult = parseResult.err("invalid_number", "123"); // { ok: false, error: "invalid_number", detail: "123" }
 ```
 
-The equivalent Rust code is:
+Chain operations and handle results:
 
-```rust
-enum ParseError {
-    InvalidNumber(String),
-    Negative(i32),
-}
+```ts
+const value = chain(parsePositiveInt("42"))
+    .map((n) => n * 2)
+    .unwrapOr(0);
 
-fn parse_int_strict(s: &str) -> Result<i32, ParseError> {
-    match s.parse::<i32>() {
-        Ok(n) => {
-            if n < 0 {
-                Err(ParseError::Negative(n))
-            } else {
-                Ok(n)
-            }
-        },
-        Err(_) => Err(ParseError::InvalidNumber(s.to_string())),
-    }
-}
-
-let times_two = parse_int_strict("123").map(|n| n * 2);
-
-let ok_result = Ok(123);
-let err_result = Err(ParseError::InvalidNumber("123".to_string()));
+// Or use pattern matching for full control
+match(parsePositiveInt("-5"), {
+    ok: (n) => console.log(`Got ${n}`),
+    err: (e) => console.log(`Error: ${e.error}`)
+});
 ```
 
 ## Core Concepts
@@ -84,13 +64,15 @@ A `Result<T, E>` is either:
   { ok: false, error: keyof E, detail: E[keyof E] }
   ```
 
+This is analogous to creating a `Result<T, E>` type in Rust, with `E` being an enum type with variants for different error types. The constraint that `E` be an enum-like type is baked into this library's type system to encourage the implementation of fixed, statically-known sets of error types which can each be handled appropriately.
+
 ### Creating Results
 
 You can create results in two ways:
 
-#### 1. Using `resultType()` (Recommended)
+#### 1. **Recommended:** Using `resultType()`
 
-This provides full type safety and inference:
+This method provides the strongest type safety and inference.
 
 ```ts
 type MyErrors = {
@@ -271,70 +253,38 @@ const invalid = parseJSON('invalid json');
 // Err({ ok: false, error: "parse_error", detail: "SyntaxError: ..." })
 ```
 
-## Complete Example: File Processing
+## Complete Example: Config Loader
 
-Here's a comprehensive example showing real-world usage:
+A realistic example showing how to chain fallible operations:
 
 ```ts
-import { resultType, ResultType, chain, match } from '@iahuang/result-ts';
+import { resultType, chain, match } from '@iahuang/result-ts';
 import * as fs from 'fs';
 
-type FileErrors = {
-    not_found: string;
-    permission_denied: string;
-    invalid_json: string;
-};
+type ConfigErrors = { not_found: string; invalid_json: string };
+const configResult = resultType<any, ConfigErrors>();
 
-const fileResult = resultType<any, FileErrors>();
-type FileResult = ResultType<typeof fileResult>;
-
-function readFile(path: string): FileResult {
+function loadConfig(path: string) {
+    // Read file
+    let content: string;
     try {
-        const content = fs.readFileSync(path, 'utf-8');
-        return fileResult.ok(content);
-    } catch (e: any) {
-        if (e.code === 'ENOENT') {
-            return fileResult.err("not_found", path);
-        }
-        if (e.code === 'EACCES') {
-            return fileResult.err("permission_denied", path);
-        }
-        throw e;
+        content = fs.readFileSync(path, 'utf-8');
+    } catch {
+        return configResult.err("not_found", path);
     }
-}
 
-function parseJSON(content: string): FileResult {
+    // Parse JSON
     try {
-        return fileResult.ok(JSON.parse(content));
+        return configResult.ok(JSON.parse(content));
     } catch (e) {
-        return fileResult.err("invalid_json", String(e));
+        return configResult.err("invalid_json", String(e));
     }
 }
 
-// Process the file with chaining
-const result = chain(readFile("config.json"))
-    .andThen(parseJSON)
-    .map((config) => config.database)
-    .result;
-
-// Handle the result
-const config = match(result, {
-    ok: (db) => db,
-    err: (e) => {
-        switch (e.error) {
-            case "not_found":
-                console.error(`File not found: ${e.detail}`);
-                break;
-            case "permission_denied":
-                console.error(`Permission denied: ${e.detail}`);
-                break;
-            case "invalid_json":
-                console.error(`Invalid JSON: ${e.detail}`);
-                break;
-        }
-        return null;
-    }
-});
+// Usage
+const dbHost = chain(loadConfig("config.json"))
+    .map((config) => config.database.host)
+    .unwrapOr("localhost");
 ```
 
 ## API Reference
@@ -390,11 +340,12 @@ All sync functions have async equivalents prefixed with `async`:
 
 ## Comparison with Other Libraries
 
-### vs. `neverthrow`
+### vs. [`neverthrow`](https://github.com/supermacro/neverthrow)
 
 Unlike `neverthrow`, this library uses plain objects instead of class instances:
 - Results can be safely serialized/deserialized (e.g., JSON.stringify)
-- No runtime overhead from class instantiation
-- More memory efficient for large datasets
 - Closer to functional programming principles
 
+### vs. [Effect](https://effect.website/)
+
+Effect provides a much more comprehensive and opinionated ecosystem implementing functional programming principles in TypeScript. This library is focused on providing a lightweight, type-safe framework for error handling without any additional tooling, dependencies, or specific use cases in mind.

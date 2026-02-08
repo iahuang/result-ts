@@ -463,5 +463,3 @@ match(result, {
     err: (e) => console.log(e.type, e.detail)
 });
 ```
-
-#### `asyncResultUnwrapOrElse` is no longer exported

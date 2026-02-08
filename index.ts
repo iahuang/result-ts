@@ -730,7 +730,7 @@ export async function asyncResultUnwrapOr<T, E>(
     return r.ok ? r.value : defaultValue;
 }
 
-async function asyncResultUnwrapOrElse<T, E>(
+export async function asyncResultUnwrapOrElse<T, E>(
     result: Promise<Result<T, E>>,
     fn: (err: Err<E>) => T | Promise<T>
 ): Promise<T> {

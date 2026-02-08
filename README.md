@@ -28,7 +28,7 @@ type ParseErrors = {
 
 const parseResult = resultType<number, ParseErrors>();
 
-function parsePositiveInt(s: string) {
+function parsePositiveInt(s: string): Result<number, ParseErrors> {
     const n = Number.parseInt(s, 10);
     if (Number.isNaN(n)) return parseResult.err("invalid_number", s);
     if (n < 0) return parseResult.err("negative", n);
@@ -46,7 +46,7 @@ const value = chain(parsePositiveInt("42"))
 // Or use pattern matching for full control
 match(parsePositiveInt("-5"), {
     ok: (n) => console.log(`Got ${n}`),
-    err: (e) => console.log(`Error: ${e.error}`)
+    err: (e) => console.log(`Error: ${e.type}`)
 });
 ```
 
@@ -55,14 +55,16 @@ match(parsePositiveInt("-5"), {
 ### Result Types
 
 A `Result<T, E>` is either:
-- `Ok<T>`: Success, containing a value of type `T`
+- Success, containing a value of type `T`
   ```ts
   { ok: true, value: T }
   ```
-- `Err<E>`: Failure, containing an error variant and detail
+- Failure, containing an `Err<E>` under the `error` field
   ```ts
-  { ok: false, error: keyof E, detail: E[keyof E] }
+  { ok: false, error: Err<E> }
   ```
+
+Where `Err<E>` is a discriminated union of `{ type: K, detail: E[K] }` for each key `K` in `E`.
 
 This is analogous to creating a `Result<T, E>` type in Rust, with `E` being an enum type with variants for different error types. The constraint that `E` be an enum-like type is baked into this library's type system to encourage the implementation of fixed, statically-known sets of error types which can each be handled appropriately.
 
@@ -111,7 +113,21 @@ import { match } from '@iahuang/result-ts';
 
 const message = match(parsePositiveInt("123"), {
     ok: (value) => `Success: ${value}`,
-    err: (e) => `Error: ${e.error} - ${e.detail}`
+    err: (e) => `Error: ${e.type} - ${e.detail}`
+});
+```
+
+For exhaustive matching on individual error variants, use `matchNested`:
+
+```ts
+import { matchNested } from '@iahuang/result-ts';
+
+const message = matchNested(parsePositiveInt("123"), {
+    ok: (value) => `Success: ${value}`,
+    err: {
+        invalid_number: (s) => `Invalid number: ${s}`,
+        negative: (n) => `Negative number: ${n}`,
+    }
 });
 ```
 
@@ -200,10 +216,10 @@ resultInspectErr(result, (err) => {
 All Result functions have async versions for working with Promises:
 
 ```ts
-import { asyncResultMap, asyncResultAndThen, tryCatchResultAsync } from '@iahuang/result-ts';
+import { asyncResultMap, asyncResultAndThen, resultFromThrowingAsyncFunction } from '@iahuang/result-ts';
 
 async function fetchUser(id: string): Promise<Result<User, FetchErrors>> {
-    return tryCatchResultAsync(
+    return resultFromThrowingAsyncFunction(
         async () => {
             const response = await fetch(`/api/users/${id}`);
             return await response.json();
@@ -231,7 +247,7 @@ const email = await asyncChain(fetchUser("123"))
 Convert throwing code to Results:
 
 ```ts
-import { tryCatchResult } from '@iahuang/result-ts';
+import { resultFromThrowingFunction, resultType, Result } from '@iahuang/result-ts';
 
 type JsonErrors = {
     parse_error: string;
@@ -239,8 +255,8 @@ type JsonErrors = {
 
 const jsonResult = resultType<any, JsonErrors>();
 
-function parseJSON(jsonString: string): ResultType<typeof jsonResult> {
-    return tryCatchResult(
+function parseJSON(jsonString: string): Result<any, JsonErrors> {
+    return resultFromThrowingFunction(
         () => JSON.parse(jsonString),
         (e) => jsonResult.err("parse_error", String(e))
     );
@@ -250,7 +266,7 @@ const data = parseJSON('{"valid": "json"}');
 // Ok({ valid: "json" })
 
 const invalid = parseJSON('invalid json');
-// Err({ ok: false, error: "parse_error", detail: "SyntaxError: ..." })
+// Err({ ok: false, error: { type: "parse_error", detail: "SyntaxError: ..." } })
 ```
 
 ## Complete Example: Config Loader
@@ -292,8 +308,7 @@ const dbHost = chain(loadConfig("config.json"))
 ### Core Types
 
 - `Result<T, E>` - The main Result type
-- `Ok<T>` - Success type
-- `Err<E>` - Error type
+- `Err<E>` - Error type (discriminated union of `{ type, detail }`)
 - `resultType<T, E>()` - Creates type-safe Result constructors
 
 ### Query Methods
@@ -329,14 +344,18 @@ const dbHost = chain(loadConfig("config.json"))
 
 ### Utilities
 
+These utility functions do not have any analogous functions in Rust, but are provided for convenience.
+
 - `match(result, handlers)` - Pattern matching
+- `matchNested(result, handlers)` - Pattern matching with per-variant error handlers
 - `chain(result)` - Method chaining API
-- `tryCatchResult(fn, errFn)` - Convert exceptions to Results
-- `tryCatchResultAsync(fn, errFn)` - Async exception handling
-- `tryCatchResultPromise(promise, errFn)` - Promise rejection handling
+- `resultFromThrowingFunction(fn, errFn)` - Convert exceptions to Results
+- `resultFromThrowingAsyncFunction(fn, errFn)` - Async exception handling
+- `resultFromThrowingPromise(promise, errFn)` - Promise rejection handling
+- `resultAll(results)` - Combine multiple Results into one
 
 All sync functions have async equivalents prefixed with `async`:
-- `asyncResultMap`, `asyncResultAndThen`, `asyncChain`, etc.
+- `asyncResultMap`, `asyncResultAndThen`, `asyncChain`, `asyncResultAll`, etc.
 
 ## Comparison with Other Libraries
 
@@ -349,3 +368,100 @@ Unlike `neverthrow`, this library uses plain objects instead of class instances:
 ### vs. [Effect](https://effect.website/)
 
 Effect provides a much more comprehensive and opinionated ecosystem implementing functional programming principles in TypeScript. This library is focused on providing a lightweight, type-safe framework for error handling without any additional tooling, dependencies, or specific use cases in mind.
+
+## Migrating from v1
+
+### Breaking Changes
+
+#### Result structure changed
+
+Errors are now nested under an `error` field instead of being spread flat on the result object. The error object uses `type` instead of `error` for the variant key.
+
+```ts
+// v1
+{ ok: false, error: "not_found", detail: "/path" }
+
+// v2
+{ ok: false, error: { type: "not_found", detail: "/path" } }
+```
+
+This means code that accessed `result.error` or `result.detail` directly on a failed result must now access `result.error.type` and `result.error.detail`.
+
+#### `Ok<T>` and `Undetailed<E>` types removed
+
+`Ok<T>` is no longer exported as a separate type. Use `Result<T, never>` if you need to represent a result that is always successful. `Undetailed<E>` has been removed entirely.
+
+#### `ResultType<T>` helper type removed
+
+The `ResultType<typeof myResult>` pattern for extracting a Result type from constructors is no longer supported. Use `Result<T, E>` directly instead.
+
+```ts
+// v1
+const parseResult = resultType<number, ParseErrors>();
+type ParseResult = ResultType<typeof parseResult>;
+
+// v2
+const parseResult = resultType<number, ParseErrors>();
+type ParseResult = Result<number, ParseErrors>;
+```
+
+#### `resultType()` no longer returns chain constructors
+
+The `okChain` and `errChain` constructors have been removed from the object returned by `resultType()`. Use `chain()` to wrap results instead.
+
+```ts
+// v1
+const r = myResult.okChain(value);
+
+// v2
+const r = chain(myResult.ok(value));
+```
+
+#### `tryCatchResult` functions renamed
+
+| v1 | v2 |
+|----|-----|
+| `tryCatchResult` | `resultFromThrowingFunction` |
+| `tryCatchResultAsync` | `resultFromThrowingAsyncFunction` |
+| `tryCatchResultPromise` | `resultFromThrowingPromise` |
+
+#### `asyncMatch` replaced by `matchNested`
+
+`asyncMatch` has been removed. The new `matchNested` function provides per-variant error handlers instead.
+
+```ts
+// v1
+await asyncMatch(asyncResult, {
+    ok: async (value) => ...,
+    err: (e) => ...
+});
+
+// v2
+matchNested(result, {
+    ok: (value) => ...,
+    err: {
+        not_found: (detail) => ...,
+        timeout: (detail) => ...,
+    }
+});
+```
+
+#### `match` error handler receives `Err<E>` instead of the full result
+
+The `err` handler in `match` now receives the `Err<E>` value (i.e. `{ type, detail }`) rather than the entire result object.
+
+```ts
+// v1
+match(result, {
+    ok: (v) => ...,
+    err: (e) => console.log(e.error, e.detail)
+});
+
+// v2
+match(result, {
+    ok: (v) => ...,
+    err: (e) => console.log(e.type, e.detail)
+});
+```
+
+#### `asyncResultUnwrapOrElse` is no longer exported

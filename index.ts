@@ -11,11 +11,9 @@
  * };
  *
  * const parseResult = resultType<number, ParseErrors>();
- * type ParseResult = ResultType<typeof parseResult>;
  * type ParseError = Err<ParseErrors>;
- * type ParseOk = Ok<number>;
  *
- * function parseIntStrict(s: string): ParseResult {
+ * function parseIntStrict(s: string): Result<number, ParseErrors> {
  *   if (!/^-?\d+$/.test(s)) return parseResult.err("invalid_number", s);
  *   return parseResult.ok(Number.parseInt(s, 10));
  * }
@@ -23,51 +21,29 @@
  */
 
 /**
- * Type representing an error result with a specific error variant and detail.
+ * Type representing an error with a specific error variant and detail.
  *
  * @typeParam E - An object type where each key represents an error variant and its value type represents the error detail
  */
 export type Err<E> = {
-    [K in keyof E]: {
-        ok: false;
-        error: K;
-        detail: E[K];
-    };
+    [Type in keyof E]: { type: Type; detail: E[Type] };
 }[keyof E];
 
 /**
- * Type representing a success result containing a value.
- *
- * @typeParam T - The type of the success value
- */
-export type Ok<T> = {
-    ok: true;
-    error?: never;
-    value: T;
-};
-
-/**
- * Result is a type that represents either success (`Ok<T>`) or failure (`Err<E>`).
+ * Result is a type that represents either success or failure.
  *
  * @typeParam T - The type of the success value
  * @typeParam E - An object type where each key represents an error variant
  */
-export type Result<T, E> = Err<E> | Ok<T>;
-
-/**
- * Helper type for creating error types without detail values.
- *
- * @typeParam E - A union of string literals representing error variants
- */
-export type Undetailed<E extends string> = {
-    [K in E]: undefined;
-};
+export type Result<T, E> =
+    | { ok: true; value: T; error?: undefined }
+    | { ok: false; value?: undefined; error: Err<E> };
 
 /**
  * Creates an `Ok` result containing a value.
  *
  * @param value - The success value to wrap
- * @returns An `Ok` result containing the value
+ * @returns A `Result` containing the value
  *
  * @example
  * ```ts
@@ -75,7 +51,7 @@ export type Undetailed<E extends string> = {
  * // result is { ok: true, value: 42 }
  * ```
  */
-export function ok<T>(value: T): Ok<T> {
+export function ok<T>(value: T): Result<T, never> {
     return { ok: true, value };
 }
 
@@ -84,16 +60,19 @@ export function ok<T>(value: T): Ok<T> {
  *
  * @param error - The error variant identifier
  * @param detail - The error detail value
- * @returns An `Err` result containing the error
+ * @returns A `Result` containing the error
  *
  * @example
  * ```ts
  * const result = err("not_found", "/path/to/file");
- * // result is { ok: false, error: "not_found", detail: "/path/to/file" }
+ * // result is { ok: false, error: { type: "not_found", detail: "/path/to/file" } }
  * ```
  */
-export function err<E extends string, D>(error: E, detail: D): Err<{ [K in E]: D }> {
-    return { ok: false, error, detail };
+export function err<E extends string, D>(
+    error: E,
+    detail: D
+): Result<never, { [K in E]: D }> {
+    return { ok: false, error: { type: error, detail } };
 }
 
 /**
@@ -101,7 +80,7 @@ export function err<E extends string, D>(error: E, detail: D): Err<{ [K in E]: D
  *
  * @typeParam T - The type of the success value
  */
-export type OkConstructor<T> = (value: T) => Ok<T>;
+export type OkConstructor<T> = (value: T) => Result<T, never>;
 
 /**
  * Type for a function that constructs `Err` results with type-safe error variants.
@@ -111,26 +90,7 @@ export type OkConstructor<T> = (value: T) => Ok<T>;
 export type ErrConstructor<E> = <K extends keyof E>(
     error: K,
     ...args: E[K] extends undefined ? [] : [detail: E[K]]
-) => Err<E>;
-
-/**
- * Type for a function that constructs `Ok` results wrapped in a chainable API.
- *
- * @typeParam T - The type of the success value
- * @typeParam E - An object type where each key represents an error variant
- */
-export type OkChainConstructor<T, E> = (value: T) => Chain<T, E>;
-
-/**
- * Type for a function that constructs `Err` results wrapped in a chainable API.
- *
- * @typeParam T - The type of the success value
- * @typeParam E - An object type where each key represents an error variant
- */
-export type ErrChainConstructor<T, E> = <K extends keyof E>(
-    error: K,
-    ...args: E[K] extends undefined ? [] : [detail: E[K]]
-) => Chain<T, E>;
+) => Result<never, E>;
 
 /**
  * Creates a constructor function for `Ok` results.
@@ -138,7 +98,7 @@ export type ErrChainConstructor<T, E> = <K extends keyof E>(
  * @returns A function that creates `Ok` results
  */
 export function okConstructor<T>(): OkConstructor<T> {
-    return ((value: T) => ({ ok: true, value })) as OkConstructor<T>;
+    return (value: T) => ({ ok: true, value } as Result<T, never>);
 }
 
 /**
@@ -150,44 +110,20 @@ export function errConstructor<E>() {
     return <K extends keyof E>(
         error: K,
         ...args: E[K] extends undefined ? [] : [detail: E[K]]
-    ): Err<E> => {
+    ): Result<never, E> => {
         return {
             ok: false,
-            error,
-            detail: args[0] as E[K],
-        };
+            error: {
+                type: error,
+                detail: args[0],
+            },
+        } as Result<never, E>;
     };
 }
 
-/**
- * Creates a constructor function for `Ok` results wrapped in a chainable API.
- *
- * @returns A function that creates chainable `Ok` results
- */
-export function okChainConstructor<T, E>(): OkChainConstructor<T, E> {
-    const constructor = okConstructor<T>();
-    return (value: T) => chain(constructor(value));
-}
-
-/**
- * Creates a constructor function for `Err` results wrapped in a chainable API.
- *
- * @returns A function that creates chainable `Err` results
- */
-export function errChainConstructor<T, E>(): ErrChainConstructor<T, E> {
-    const constructor = errConstructor<E>();
-    return (
-        error: keyof E,
-        ...args: E[keyof E] extends undefined ? [] : [detail: E[keyof E]]
-    ) => chain(constructor(error, ...args));
-}
-
-type ResultConstructors<T, E> = {
+export type ResultConstructors<T, E> = {
     ok: OkConstructor<T>;
     err: ErrConstructor<E>;
-    okChain: OkChainConstructor<T, E>;
-    errChain: ErrChainConstructor<T, E>;
-    __result: Result<T, E>;
 };
 
 /**
@@ -196,7 +132,7 @@ type ResultConstructors<T, E> = {
  * This is the recommended way to create results with custom error types,
  * as it provides full type safety and inference for error variants.
  *
- * @returns An object containing `ok`, `err`, `okChain`, and `errChain` constructors
+ * @returns An object containing `ok` and `err` constructors
  *
  * @example
  * ```ts
@@ -214,18 +150,8 @@ export function resultType<T, E>(): ResultConstructors<T, E> {
     return {
         ok: okConstructor(),
         err: errConstructor(),
-        okChain: okChainConstructor(),
-        errChain: errChainConstructor(),
-        __result: undefined as unknown as Result<T, E>,
     } as ResultConstructors<T, E>;
 }
-
-/**
- * Extracts the Result type from a ResultConstructors object.
- *
- * @typeParam T - A ResultConstructors type
- */
-export type ResultType<T extends ResultConstructors<any, any>> = T["__result"];
 
 /**
  * Returns `other` if the result is `Ok`, otherwise returns the `Err` value of `result`.
@@ -267,7 +193,7 @@ export function resultAndThen<T, E, R>(
  * @returns The `Err` value if `result` is `Err`, otherwise `null`
  */
 export function resultErr<T, E>(result: Result<T, E>): Err<E> | null {
-    return !result.ok ? result : null;
+    return !result.ok ? result.error : null;
 }
 
 /**
@@ -305,7 +231,7 @@ export function resultExpectErr<T, E>(
     if (result.ok) {
         throw new Error(msg);
     }
-    return result;
+    return result.error;
 }
 
 /**
@@ -355,7 +281,7 @@ export function resultInspectErr<T, E>(
     fn: (err: Err<E>) => void
 ): Result<T, E> {
     if (!result.ok) {
-        fn(result);
+        fn(result.error);
     }
     return result;
 }
@@ -366,7 +292,9 @@ export function resultInspectErr<T, E>(
  * @param r - The result to check
  * @returns `true` if the result is `Err`, `false` otherwise
  */
-export function resultIsErr<T, E>(r: Result<T, E>): r is Err<E> {
+export function resultIsErr<T, E>(
+    r: Result<T, E>
+): r is Extract<Result<T, E>, { ok: false }> {
     return !r.ok;
 }
 
@@ -381,7 +309,7 @@ export function resultIsErrAnd<T, E>(
     r: Result<T, E>,
     fn: (err: Err<E>) => boolean
 ): boolean {
-    return !r.ok && fn(r);
+    return !r.ok && fn(r.error);
 }
 
 /**
@@ -390,7 +318,9 @@ export function resultIsErrAnd<T, E>(
  * @param r - The result to check
  * @returns `true` if the result is `Ok`, `false` otherwise
  */
-export function resultIsOk<T, E>(r: Result<T, E>): r is Ok<T> {
+export function resultIsOk<T, E>(
+    r: Result<T, E>
+): r is Extract<Result<T, E>, { ok: true }> {
     return r.ok;
 }
 
@@ -439,7 +369,9 @@ export function resultMapErr<T, E, F>(
     result: Result<T, E>,
     fn: (err: Err<E>) => Err<F>
 ): Result<T, F> {
-    return result.ok ? (result as Ok<T>) : fn(result);
+    return result.ok
+        ? (result as Result<T, F>)
+        : { ok: false as const, error: fn(result.error) };
 }
 
 /**
@@ -477,7 +409,7 @@ export function resultMapOrElse<T, E, R>(
     defaultValue: (err: Err<E>) => R,
     fn: (value: T) => R
 ): R {
-    return result.ok ? fn(result.value) : defaultValue(result);
+    return result.ok ? fn(result.value) : defaultValue(result.error);
 }
 
 /**
@@ -520,7 +452,7 @@ export function resultOrElse<T, E>(
     result: Result<T, E>,
     fn: (err: Err<E>) => Result<T, E>
 ): Result<T, E> {
-    return result.ok ? result : fn(result);
+    return result.ok ? result : fn(result.error);
 }
 
 /**
@@ -537,7 +469,7 @@ export function resultOrElse<T, E>(
  */
 export function resultUnwrap<T, E>(result: Result<T, E>): T {
     if (!result.ok) {
-        throw result;
+        throw result.error;
     }
     return result.value;
 }
@@ -553,7 +485,7 @@ export function resultUnwrapErr<T, E>(result: Result<T, E>): Err<E> {
     if (result.ok) {
         throw new Error("Result is ok; expected an error");
     }
-    return result;
+    return result.error;
 }
 
 /**
@@ -581,43 +513,35 @@ export function resultUnwrapOrElse<T, E>(
     result: Result<T, E>,
     fn: (err: Err<E>) => T
 ): T {
-    return result.ok ? result.value : fn(result);
+    return result.ok ? result.value : fn(result.error);
 }
 
 /**
  * Executes a function and catches any thrown exceptions, converting them to a `Result`.
  *
  * @param fn - The function to execute
- * @param err - A function that converts a thrown exception to an `Err` value
+ * @param err - A function that converts a thrown exception to an error object or a contant error object
  * @returns `Ok` containing the return value if `fn` succeeds, or `Err` if it throws
  *
  * @example
  * ```ts
- * const result = tryCatchResult(
+ * const result = resultFromThrowingFunction(
  *   () => JSON.parse(jsonString),
  *   (e) => err("parse_error", String(e))
  * );
  * ```
  */
-export function tryCatchResult<T, E>(
+export function resultFromThrowingFunction<T, E>(
     fn: () => T,
-    err: (e: unknown) => Err<E>
+    err: Result<never, E> | ((e: unknown) => Result<never, E>)
 ): Result<T, E> {
     try {
         return ok(fn());
     } catch (e) {
-        return err(e);
+        return typeof err === "function" ? err(e) : err;
     }
 }
 
-/**
- * Async version of `resultAnd`. Returns `other` if the result is `Ok`, otherwise returns the `Err` value of `result`.
- *
- * @param result - The promise of a result to check
- * @param other - The promise of a result to return if `result` is `Ok`
- * @returns A promise of `other` if `result` is `Ok`, otherwise the `Err` value of `result`
- * @see {@link resultAnd}
- */
 export function asyncResultAnd<T, E>(
     result: Promise<Result<T, E>>,
     other: Promise<Result<T, E>>
@@ -625,14 +549,6 @@ export function asyncResultAnd<T, E>(
     return result.then((r) => (r.ok ? other : r));
 }
 
-/**
- * Async version of `resultAndThen`. Calls `fn` if the result is `Ok`, otherwise returns the `Err` value of `result`.
- *
- * @param result - The promise of a result to check
- * @param fn - The async function to call with the `Ok` value
- * @returns A promise of the result of calling `fn` if `result` is `Ok`, otherwise the `Err` value of `result`
- * @see {@link resultAndThen}
- */
 export function asyncResultAndThen<T, E, R>(
     result: Promise<Result<T, E>>,
     fn: (value: T) => Promise<Result<R, E>>
@@ -644,7 +560,7 @@ export async function asyncResultErr<T, E>(
     result: Promise<Result<T, E>>
 ): Promise<Err<E> | null> {
     const r = await result;
-    return !r.ok ? r : null;
+    return !r.ok ? r.error : null;
 }
 
 export async function asyncResultExpect<T, E>(
@@ -666,16 +582,16 @@ export async function asyncResultExpectErr<T, E>(
     if (r.ok) {
         throw new Error(msg);
     }
-    return r;
+    return r.error;
 }
 
-export function asyncResultFlatten<T, E>(
+export async function asyncResultFlatten<T, E>(
     result: Promise<Result<Result<T, E>, E>>
 ): Promise<Result<T, E>> {
     return result.then((r) => (r.ok ? r.value : r));
 }
 
-export function asyncResultInspect<T, E>(
+export async function asyncResultInspect<T, E>(
     result: Promise<Result<T, E>>,
     fn: (value: T) => void | Promise<void>
 ): Promise<Result<T, E>> {
@@ -687,13 +603,13 @@ export function asyncResultInspect<T, E>(
     });
 }
 
-export function asyncResultInspectErr<T, E>(
+export async function asyncResultInspectErr<T, E>(
     result: Promise<Result<T, E>>,
     fn: (err: Err<E>) => void | Promise<void>
 ): Promise<Result<T, E>> {
     return result.then(async (r) => {
         if (!r.ok) {
-            await fn(r);
+            await fn(r.error);
         }
         return r;
     });
@@ -711,7 +627,7 @@ export async function asyncResultIsErrAnd<T, E>(
     fn: (err: Err<E>) => boolean
 ): Promise<boolean> {
     const r = await result;
-    return !r.ok && fn(r);
+    return !r.ok && fn(r.error);
 }
 
 export async function asyncResultIsOk<T, E>(
@@ -729,18 +645,22 @@ export async function asyncResultIsOkAnd<T, E>(
     return r.ok && fn(r.value);
 }
 
-export function asyncResultMap<T, E, R>(
+export async function asyncResultMap<T, E, R>(
     result: Promise<Result<T, E>>,
     fn: (value: T) => R | Promise<R>
 ): Promise<Result<R, E>> {
     return result.then(async (r) => (r.ok ? ok(await fn(r.value)) : r));
 }
 
-export function asyncResultMapErr<T, E, F>(
+export async function asyncResultMapErr<T, E, F>(
     result: Promise<Result<T, E>>,
     fn: (err: Err<E>) => Err<F> | Promise<Err<F>>
 ): Promise<Result<T, F>> {
-    return result.then(async (r) => (r.ok ? (r as Ok<T>) : await fn(r)));
+    return result.then(async (r) =>
+        r.ok
+            ? (r as Result<T, F>)
+            : { ok: false as const, error: await fn(r.error) }
+    );
 }
 
 export async function asyncResultMapOr<T, E, R>(
@@ -758,7 +678,7 @@ export async function asyncResultMapOrElse<T, E, R>(
     fn: (value: T) => R | Promise<R>
 ): Promise<R> {
     const r = await result;
-    return r.ok ? await fn(r.value) : await defaultValue(r);
+    return r.ok ? await fn(r.value) : await defaultValue(r.error);
 }
 
 export async function asyncResultOk<T, E>(
@@ -768,18 +688,18 @@ export async function asyncResultOk<T, E>(
     return r.ok ? r.value : null;
 }
 
-export function asyncResultOr<T, E>(
+export async function asyncResultOr<T, E>(
     result: Promise<Result<T, E>>,
     other: Promise<Result<T, E>>
 ): Promise<Result<T, E>> {
     return result.then((r) => (r.ok ? r : other));
 }
 
-export function asyncResultOrElse<T, E>(
+export async function asyncResultOrElse<T, E>(
     result: Promise<Result<T, E>>,
     fn: (err: Err<E>) => Promise<Result<T, E>>
 ): Promise<Result<T, E>> {
-    return result.then((r) => (r.ok ? r : fn(r)));
+    return result.then((r) => (r.ok ? r : fn(r.error)));
 }
 
 export async function asyncResultUnwrap<T, E>(
@@ -787,7 +707,7 @@ export async function asyncResultUnwrap<T, E>(
 ): Promise<T> {
     const r = await result;
     if (!r.ok) {
-        throw r;
+        throw r.error;
     }
     return r.value;
 }
@@ -799,7 +719,7 @@ export async function asyncResultUnwrapErr<T, E>(
     if (r.ok) {
         throw new Error("Result is ok; expected an error");
     }
-    return r;
+    return r.error;
 }
 
 export async function asyncResultUnwrapOr<T, E>(
@@ -810,37 +730,37 @@ export async function asyncResultUnwrapOr<T, E>(
     return r.ok ? r.value : defaultValue;
 }
 
-export async function asyncResultUnwrapOrElse<T, E>(
+async function asyncResultUnwrapOrElse<T, E>(
     result: Promise<Result<T, E>>,
     fn: (err: Err<E>) => T | Promise<T>
 ): Promise<T> {
     const r = await result;
-    return r.ok ? r.value : await fn(r);
+    return r.ok ? r.value : await fn(r.error);
 }
 
 /**
  * Executes an async function and catches any thrown exceptions, converting them to a `Result`.
  *
  * @param fn - The async function to execute
- * @param err - A function that converts a thrown exception to an `Err` value
+ * @param err - A function that converts a thrown exception to an error object or a contant error object
  * @returns A promise of `Ok` containing the return value if `fn` succeeds, or `Err` if it throws
  *
  * @example
  * ```ts
- * const result = await tryCatchResultAsync(
+ * const result = await resultFromThrowingAsyncFunction(
  *   async () => await fetchData(),
  *   (e) => err("fetch_error", String(e))
  * );
  * ```
  */
-export async function tryCatchResultAsync<T, E>(
+export async function resultFromThrowingAsyncFunction<T, E>(
     fn: () => Promise<T>,
-    err: (e: unknown) => Err<E>
+    err: Result<never, E> | ((e: unknown) => Result<never, E>)
 ): Promise<Result<T, E>> {
     try {
         return ok(await fn());
     } catch (e) {
-        return err(e);
+        return typeof err === "function" ? err(e) : err;
     }
 }
 
@@ -848,25 +768,25 @@ export async function tryCatchResultAsync<T, E>(
  * Wraps a promise and catches any rejections, converting them to a `Result`.
  *
  * @param prom - The promise to wrap
- * @param err - A function that converts a rejection reason to an `Err` value
+ * @param err - A function that converts a rejection reason to an error object or a contant error object
  * @returns A promise of `Ok` containing the resolved value if `prom` resolves, or `Err` if it rejects
  *
  * @example
  * ```ts
- * const result = await tryCatchResultPromise(
+ * const result = await resultFromThrowingPromise(
  *   fetch('/api/data'),
  *   (e) => err("network_error", String(e))
  * );
  * ```
  */
-export async function tryCatchResultPromise<T, E>(
+export async function resultFromThrowingPromise<T, E>(
     prom: Promise<T>,
-    err: (e: unknown) => Err<E>
+    err: Result<never, E> | ((e: unknown) => Result<never, E>)
 ): Promise<Result<T, E>> {
     try {
         return ok(await prom);
     } catch (e) {
-        return err(e);
+        return typeof err === "function" ? err(e) : err;
     }
 }
 
@@ -1108,7 +1028,7 @@ export function asyncChain<I, E>(
  * ```ts
  * const message = match(parseIntStrict("123"), {
  *   ok: n => `Success: ${n}`,
- *   err: e => `Error: ${e.error}`
+ *   err: e => `Error: ${e.type}`
  * });
  * ```
  */
@@ -1119,32 +1039,67 @@ export function match<T, E, R>(
         err: (err: Err<E>) => R;
     }
 ): R {
-    return result.ok ? handlers.ok(result.value) : handlers.err(result);
+    return result.ok ? handlers.ok(result.value) : handlers.err(result.error);
 }
 
 /**
- * Async version of `match`. Pattern matches on a `Promise<Result>`, applying the appropriate async handler function.
+ * Pattern matches on a `Result`, applying the appropriate handler function for nested error types.
  *
- * @param result - The promise of a result to match on
- * @param handlers - An object with `ok` and `err` async handler functions
- * @returns A promise of the result of calling the appropriate handler
+ * This provides a convenient way to handle both success and error cases in a single expression,
+ * similar to Rust's `match` expression.
+ *
+ * @param result - The result to match on
+ * @param handlers - An object with `ok` and `err` handler functions
+ * @returns The result of calling the appropriate handler
  *
  * @example
  * ```ts
- * const message = await asyncMatch(fetchData(), {
- *   ok: async data => await processData(data),
- *   err: e => `Error: ${e.error}`
+ * const message = matchNested(parseIntStrict("123"), {
+ *   ok: n => `Success: ${n}`,
+ *   err: {
+ *     invalid_number: s => `Invalid number: ${s}`,
+ *     negative: n => `Negative number: ${n}`,
+ *   }
  * });
  * ```
  * @see {@link match}
  */
-export async function asyncMatch<T, E, R>(
-    result: Promise<Result<T, E>>,
+export function matchNested<T, E, R>(
+    result: Result<T, E>,
     handlers: {
-        ok: (value: T) => R | Promise<R>;
-        err: (err: Err<E>) => R | Promise<R>;
+        ok: (value: T) => R;
+        err: {
+            [Type in keyof E]: (detail: E[Type]) => R;
+        };
     }
-): Promise<R> {
-    const r = await result;
-    return r.ok ? await handlers.ok(r.value) : await handlers.err(r);
+): R {
+    if (result.ok) return handlers.ok(result.value);
+    const err = result.error;
+    const handler = handlers.err[err.type];
+    return handler(err.detail);
+}
+
+/**
+ * Combines multiple results into a single result, returning an array of values if all are Ok, or the first Err if any are Err.
+ *
+ * @param results - An array of results to combine
+ * @returns A result containing an array of values if all are Ok, or the first Err if any are Err
+ */
+export function resultAll<T, E>(results: Result<T, E>[]): Result<T[], E> {
+    if (results.some(resultIsErr)) {
+        return results.find(resultIsErr)!;
+    }
+    return ok(results.map(resultUnwrap));
+}
+
+/**
+ * Combines multiple results into a single result, returning an array of values if all are Ok, or the first Err if any are Err.
+ *
+ * @param results - An array of results to combine
+ * @returns A result containing an array of values if all are Ok, or the first Err if any are Err
+ */
+export function asyncResultAll<T, E>(
+    results: Promise<Result<T, E>>[]
+): Promise<Result<T[], E>> {
+    return Promise.all(results).then(resultAll);
 }
